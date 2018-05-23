@@ -1,0 +1,116 @@
+---
+title: "Lifting weights well"
+author: "Daniël Hubbeling"
+date: "23 mei 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(gbm)
+
+# enable paralell processing
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+This report will describe how we can build a model, how to cross validate it, what the expected out of sample error is, and why we made the choices we did. In addition You will also use your prediction model to predict 20 different test cases.
+
+Data used in this report comes from: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har
+ 
+## Reading the data
+
+While looking at the data it can be seen there are a large number of columns which have empty or NA values. To make the train function run better we'll clean up the data somewhat. After that we split up the given training set in a 70% training and 30% validation set so we can use it for validation of the model. 
+
+```{r cache=TRUE}
+# read the data
+wledata<-read.csv("pml-training.csv")
+# remove columns with a lot of NA's or emtpy values
+wledata_clean<-wledata[,colSums(is.na(wledata) | wledata=="") == 0]
+# remove first 7 columns as these are metadata, not predictors
+wledata_clean<-wledata_clean[,8:60]
+
+# set the seed and split the data in a training and validation set for validation of the model later on
+set.seed(1234)
+inTrain<-createDataPartition(y=wledata_clean$classe,p=0.7,list=FALSE)
+training<-wledata_clean[inTrain,]
+validation<-wledata_clean[-inTrain,]
+```
+
+## Creating the model
+
+We can see the data contains a lot of predictors, which would make the boosting approach (using the gbm package) a good candidate to train for a suitable model.
+
+```{r cache=TRUE}
+#Create a generalized boosted regression model with all predictors
+modGBM<-train(classe~.,data=training,method="gbm",trControl = fitControl, verbose=FALSE)
+
+#print the model info
+print(modGBM)
+
+#and apply to the trainign data to see the accuracy of the model
+confusionMatrix(predict(modGBM,training[,-53]),training$classe)
+```
+
+Since the goal of this assignment is to correctly predict the values for 20 test records as included in the given pml-testing.csv we can already conclude that this means there is a 58,2% probability of correctly predicting these.
+
+
+```{r cache=TRUE}
+.9733^20
+```
+
+Since this is a bit low let's see if we can improve the accuracy by increasing the number of iterations done to 1000 instead of the 150 the first attempt used.
+
+```{r cache=TRUE}
+#Create a generalized boosted regression model while tuning some parameters
+grid <- expand.grid(n.trees = 1000, interaction.depth = 3, shrinkage = .1, n.minobsinnode = 10)
+modGBM2<-train(classe~.,data=training,method="gbm",trControl = fitControl, tuneGrid=grid, verbose=FALSE)
+```
+
+
+```{r}
+#print the new model
+print(modGBM2)
+
+# and apply the to the training data to see the accuracy
+confusionMatrix(predict(modGBM2,training[,-53]),training$classe)
+```
+
+We see that with this number of iterations we actually achieved a 100% fit to the training data, sounds like enough to take it to the next step.
+
+## Validating the model
+To see if we haven't overfitted the model on the training data but it also holds up to other data we apply it to the validation data and check the accuracy.
+
+```{r}
+# apply the found model to the validation data to check the results
+confusionMatrix(predict(modGBM2,validation[,-53]),validation$classe)
+```
+
+It seems we found a model which a achieves an accuracy of 99,42% on the validation data. For our 20 test records this means there is a 89% probability of predicting all 20 correctly. This sounds pretty good.
+
+```{r cache=TRUE}
+.9942^20
+```
+
+## Making predictions
+
+Now that we know we have a model with the required accuracy we can apply it to the 20 movements to be tested to predict the class of these movements.
+
+```{r}
+# read the data
+testing<-read.csv("pml-testing.csv")
+
+# Do the prediction using the final model
+predict(modGBM2,testing)
+```
+
+
+
